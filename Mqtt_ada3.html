@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Adafruit IO — MQTT Buttons Debug</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+
+<style>
+body{font-family:sans-serif;background:#0d1117;color:#f0f6fc;margin:0;padding:1em}
+input,button{font-size:14px;padding:8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#f0f6fc}
+button{cursor:pointer}
+button.send{width:100%;margin:4px 0;text-align:left;background:#238636;border:none}
+button.send:disabled{opacity:0.4;cursor:not-allowed}
+label{display:block;margin-top:8px;font-size:13px}
+#status{margin-left:8px;font-size:13px;color:#aaa}
+#log{height:300px;overflow:auto;margin-top:10px;background:#161b22;padding:10px;border-radius:6px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>Adafruit IO — MQTT 6 Buttons Debug</h1>
+
+<label>Adafruit IO Username: <input id="username" type="text" placeholder="your-adafruit-username"></label>
+<label>AIO Key: <input id="key" type="password" placeholder="your AIO key"></label>
+<label>Feed name: <input id="feed" type="text" value="buttons"></label>
+
+<div style="margin-top:10px">
+  <button id="connectBtn">Connect</button>
+  <span id="status">Disconnected</span>
+</div>
+
+<hr style="margin:16px 0;border:0;border-top:1px solid #30363d">
+
+<div id="buttons">
+  <button class="send" data-payload="BTN_1">Button 1 — BTN_1</button>
+  <button class="send" data-payload="BTN_2">Button 2 — BTN_2</button>
+  <button class="send" data-payload="BTN_3">Button 3 — BTN_3</button>
+  <button class="send" data-payload="BTN_4">Button 4 — BTN_4</button>
+  <button class="send" data-payload="BTN_5">Button 5 — BTN_5</button>
+  <button class="send" data-payload="BTN_6">Button 6 — BTN_6</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+(function(){
+  const connectBtn = document.getElementById("connectBtn");
+  const statusEl = document.getElementById("status");
+  const logEl = document.getElementById("log");
+  const buttons = Array.from(document.querySelectorAll(".send"));
+
+  let client = null;
+  let connected = false;
+
+  function log(msg){
+    const line = document.createElement("div");
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    console.log(msg);  // Also to console
+  }
+
+  function setStatus(msg, color){
+    statusEl.textContent = msg;
+    statusEl.style.color = color || "#aaa";
+  }
+
+  function connect(){
+    if(connected){ disconnect(); return; }
+
+    const username = document.getElementById("username").value.trim();
+    const key = document.getElementById("key").value.trim();
+    if(!username || !key){ alert("Enter your Adafruit IO username and key."); return; }
+
+    const feed = document.getElementById("feed").value.trim();
+    if(!feed){ alert("Enter a feed name."); return; }
+
+    const clientId = "aio-web-" + Math.random().toString(16).slice(2,8);
+
+    const wsUrl = "wss://io.adafruit.com/mqtt";
+    log(`Creating MQTT client at ${wsUrl} with clientId=${clientId}`);
+    client = new Paho.MQTT.Client(wsUrl, clientId);
+
+    // Enable verbose Paho tracing
+    Paho.MQTT.Client.trace = function (text) {
+      console.debug("[MQTT TRACE]", text);
+      const line = document.createElement("div");
+      line.textContent = `[TRACE] ${text}`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    client.onConnectionLost = function(responseObject){
+      connected = false;
+      setStatus("Disconnected", "orange");
+      log("Connection lost: " + (responseObject?.errorMessage || "unknown"));
+      buttons.forEach(b=>b.disabled=true);
+    };
+
+    client.onMessageArrived = function(message){
+      log(`Received on ${message.destinationName}: ${message.payloadString}`);
+    };
+
+    client.onMessageDelivered = function(message){
+      log(`Message delivered: ${message.payloadString}`);
+    };
+
+    const options = {
+      useSSL: true,
+      userName: username,
+      password: key,
+      timeout: 10,
+      keepAliveInterval: 30,
+      onSuccess: function(){
+        connected = true;
+        setStatus("Connected", "lightgreen");
+        log("Connected successfully to Adafruit IO");
+        buttons.forEach(b=>b.disabled=false);
+      },
+      onFailure: function(e){
+        connected = false;
+        setStatus("Connect failed", "red");
+        log("Connection failed: " + JSON.stringify(e));
+        buttons.forEach(b=>b.disabled=true);
+      }
+    };
+
+    setStatus("Connecting…");
+    log("Attempting connection…");
+    client.connect(options);
+  }
+
+  function disconnect(){
+    if(client && connected){
+      client.disconnect();
+      connected = false;
+      setStatus("Disconnected");
+      log("Disconnected manually");
+      buttons.forEach(b=>b.disabled=true);
+    }
+  }
+
+  function sendPayload(payload){
+    if(!connected){ log("Cannot send — not connected."); return; }
+    const feed = document.getElementById("feed").value.trim();
+    const username = document.getElementById("username").value.trim();
+    const topic = `${username}/feeds/${feed}`;
+    const message = new Paho.MQTT.Message(payload);
+    message.destinationName = topic;
+    try {
+      client.send(message);
+      log(`Sent to ${topic}: ${payload}`);
+    } catch(e){
+      log("Send failed: " + e.toString());
+    }
+  }
+
+  connectBtn.addEventListener("click", connect);
+  buttons.forEach(btn => {
+    btn.disabled = true;
+    btn.addEventListener("click", ()=> sendPayload(btn.dataset.payload));
+  });
+
+})();
+</script>
+</body>
+</html>
