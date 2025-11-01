@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Adafruit IO MQTT Tester</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+<style>
+body{font-family:sans-serif;background:#0d1117;color:#f0f6fc;margin:0;padding:1em;display:flex;flex-direction:column;align-items:center}
+input,button{font-size:14px;padding:8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#f0f6fc}
+button{cursor:pointer}
+h1{margin-bottom:0.2em}
+h2{margin-top:1em}
+.container{display:flex;flex-wrap:wrap;justify-content:center;gap:1em;width:100%;max-width:800px}
+.column{flex:1 1 350px;min-width:320px;background:#161b22;border-radius:10px;padding:1em;box-shadow:0 0 10px #0005}
+label{display:block;margin-top:8px;font-size:13px}
+#status{margin-left:8px;font-size:13px;color:#aaa}
+#buttons button{display:block;width:100%;margin-top:8px;padding:10px;font-size:16px}
+#log{height:350px;overflow:auto;margin-top:10px;background:#0d1117;padding:10px;border-radius:6px;font-size:12px;border:1px solid #30363d}
+</style>
+</head>
+<body>
+<h1>Adafruit IO MQTT Tester</h1>
+
+<div class="container">
+  <!-- Left: connection & publisher -->
+  <div class="column">
+    <h2>Connection & Publisher</h2>
+    <label>Username: <input id="username" placeholder="adafruit username"></label>
+    <label>AIO Key: <input id="key" type="password" placeholder="aio_xxx"></label>
+    <label>Feed name: <input id="feed" placeholder="feed name (e.g. buttons)"></label>
+
+    <div style="margin-top:10px">
+      <button id="connectBtn">Connect</button>
+      <span id="status">Disconnected</span>
+    </div>
+
+    <div id="buttons" style="margin-top:1em">
+      <button data-msg="BTN_1">Button 1</button>
+      <button data-msg="BTN_2">Button 2</button>
+      <button data-msg="BTN_3">Button 3</button>
+      <button data-msg="BTN_4">Button 4</button>
+      <button data-msg="BTN_5">Button 5</button>
+      <button data-msg="BTN_6">Button 6</button>
+    </div>
+  </div>
+
+  <!-- Right: subscriber log -->
+  <div class="column">
+    <h2>Subscriber Log</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const qs = new URLSearchParams(window.location.search);
+  const userEl=document.getElementById("username");
+  const keyEl=document.getElementById("key");
+  const feedEl=document.getElementById("feed");
+  const connectBtn=document.getElementById("connectBtn");
+  const statusEl=document.getElementById("status");
+  const logEl=document.getElementById("log");
+  const buttonsDiv=document.getElementById("buttons");
+
+  if(qs.get("user")) userEl.value=qs.get("user");
+  if(qs.get("key")) keyEl.value=qs.get("key");
+  if(qs.get("feed")) feedEl.value=qs.get("feed");
+
+  let client=null, connected=false;
+
+  function log(msg){
+    const line=document.createElement("div");
+    line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop=logEl.scrollHeight;
+    console.log(msg);
+  }
+
+  function setStatus(msg,color){statusEl.textContent=msg;statusEl.style.color=color||"#aaa";}
+
+  function connect(){
+    if(connected){ client.disconnect(); connected=false; setStatus("Disconnected"); log("🔌 Disconnected manually"); return; }
+
+    const username=userEl.value.trim();
+    const key=keyEl.value.trim();
+    const feed=feedEl.value.trim();
+    if(!username||!key||!feed){ alert("Fill in username, key, and feed name"); return; }
+
+    const clientId="aio-tester-"+Math.random().toString(16).slice(2,8);
+    const wsUrl="wss://io.adafruit.com/mqtt";
+    client=new Paho.MQTT.Client(wsUrl,clientId);
+
+    Paho.MQTT.Client.trace=function(txt){ log("[TRACE] "+txt); };
+
+    client.onConnectionLost=function(res){
+      connected=false;
+      setStatus("Disconnected","orange");
+      log("⚠️ Connection lost: "+(res.errorMessage||"unknown"));
+    };
+
+    client.onMessageArrived=function(msg){
+      log(`📩 ${msg.destinationName}: ${msg.payloadString}`);
+    };
+
+    const options={
+      useSSL:true,
+      userName:username,
+      password:key,
+      timeout:10,
+      keepAliveInterval:30,
+      onSuccess:function(){
+        connected=true;
+        setStatus("Connected","lightgreen");
+        const topic=`${username}/feeds/${feed}`;
+        log("✅ Connected — subscribing to "+topic);
+        client.subscribe(topic);
+      },
+      onFailure:function(e){
+        setStatus("Connect failed","red");
+        log("❌ Connection failed: "+(e.errorMessage||JSON.stringify(e)));
+      }
+    };
+
+    setStatus("Connecting…");
+    log(`Connecting to ${wsUrl} as ${clientId}`);
+    client.connect(options);
+  }
+
+  connectBtn.addEventListener("click",connect);
+
+  buttonsDiv.querySelectorAll("button").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      if(!connected){ alert("Not connected"); return; }
+      const username=userEl.value.trim();
+      const feed=feedEl.value.trim();
+      const topic=`${username}/feeds/${feed}`;
+      const msg=new Paho.MQTT.Message(btn.dataset.msg);
+      msg.destinationName=topic;
+      client.send(msg);
+      log(`➡️ Published to ${topic}: ${btn.dataset.msg}`);
+    });
+  });
+})();
+</script>
+</body>
+</html>
