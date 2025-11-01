@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Adafruit IO MQTT Tester v2</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
+  <style>
+    body{font-family:sans-serif;background:#0d1117;color:#f0f6fc;margin:0;padding:1em}
+    input,button{font-size:14px;padding:8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#f0f6fc}
+    button{cursor:pointer}
+    h1,h2{margin:0.5em 0}
+    .container{display:flex;flex-wrap:wrap;gap:1em}
+    .panel{flex:1 1 300px;background:#161b22;padding:1em;border-radius:8px}
+    label{display:block;margin-top:8px;font-size:13px}
+    #status{margin-left:10px;font-size:13px;color:#aaa}
+    #buttons button{display:block;width:100%;margin-top:8px;padding:10px;font-size:16px}
+    #log{height:300px;overflow:auto;padding:10px;border:1px solid #30363d;border-radius:6px;margin-top:1em;font-size:12px;background:#0d1117}
+  </style>
+</head>
+<body>
+  <h1>Adafruit IO MQTT Tester v2</h1>
+
+  <div class="container">
+    <div class="panel">
+      <h2>Publisher</h2>
+      <label>Username: <input id="username" placeholder="your username"></label>
+      <label>AIO Key:  <input id="key" type="password" placeholder="aio_xxx"></label>
+      <label>Feed name: <input id="feed" placeholder="feed name"></label>
+
+      <div style="margin-top:10px">
+        <button id="connectBtn">Connect / Disconnect</button>
+        <span id="status">Disconnected</span>
+      </div>
+
+      <div id="buttons" style="margin-top:1em">
+        <button data-msg="BTN_1">Button 1 (BTN_1)</button>
+        <button data-msg="BTN_2">Button 2 (BTN_2)</button>
+        <button data-msg="BTN_3">Button 3 (BTN_3)</button>
+        <button data-msg="BTN_4">Button 4 (BTN_4)</button>
+        <button data-msg="BTN_5">Button 5 (BTN_5)</button>
+        <button data-msg="BTN_6">Button 6 (BTN_6)</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Subscriber / Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const urlParams = new URLSearchParams(window.location.search);
+  const userInput = document.getElementById("username");
+  const keyInput = document.getElementById("key");
+  const feedInput = document.getElementById("feed");
+  const connectBtn = document.getElementById("connectBtn");
+  const statusEl = document.getElementById("status");
+  const logEl = document.getElementById("log");
+  const buttonsDiv = document.getElementById("buttons");
+
+  if(urlParams.get("user")) userInput.value = urlParams.get("user");
+  if(urlParams.get("key")) keyInput.value = urlParams.get("key");
+  if(urlParams.get("feed")) feedInput.value = urlParams.get("feed");
+
+  let client = null;
+  let connected = false;
+
+  function log(msg){
+    const line = document.createElement("div");
+    line.textContent = "["+new Date().toLocaleTimeString()+"] "+msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    console.log(msg);
+  }
+
+  function setStatus(text,color){
+    statusEl.textContent = text;
+    statusEl.style.color = color || "#aaa";
+  }
+
+  function connect(){
+    if(connected){
+      client.disconnect();
+      connected = false;
+      setStatus("Disconnected","orange");
+      log("🔌 Disconnected by user");
+      return;
+    }
+
+    const username = userInput.value.trim();
+    const key = keyInput.value.trim();
+    const feed = feedInput.value.trim();
+    if(!username || !key || !feed){
+      alert("Please fill in username, key, and feed.");
+      return;
+    }
+
+    const clientId = "aio-web-"+Math.random().toString(16).slice(2,10);
+    const wsUrl = "wss://io.adafruit.com:443/mqtt";
+    log("Creating MQTT client: "+wsUrl+" clientId="+clientId);
+    client = new Paho.MQTT.Client(wsUrl, clientId);
+
+    // Trace full debug
+    Paho.MQTT.Client.trace = function(traceText){
+      log("[TRACE] "+traceText);
+    };
+
+    client.onConnectionLost = function(response){
+      connected = false;
+      setStatus("Disconnected","red");
+      log("⚠️ Connection lost: "+(response.errorMessage || response));
+    };
+
+    client.onMessageArrived = function(msg){
+      log("📥 Received => topic: "+msg.destinationName+" payload: "+msg.payloadString);
+    };
+
+    const topic = username + "/feeds/" + feed;
+    const options = {
+      useSSL: true,
+      userName: username,
+      password: key,
+      timeout: 15,
+      keepAliveInterval: 60,
+      onSuccess: function(){
+        connected = true;
+        setStatus("Connected","lightgreen");
+        log("✅ Connected. Now subscribing to "+topic);
+        client.subscribe(topic, { qos: 0 });
+      },
+      onFailure: function(err){
+        setStatus("Connect failed","red");
+        log("❌ Connection failed: "+(err.errorMessage || JSON.stringify(err)));
+      },
+      // add will? not needed
+    };
+
+    setStatus("Connecting…","gold");
+    log("Attempting connect with options: "+JSON.stringify({ userName:username, useSSL:true }));
+    client.connect(options);
+  }
+
+  connectBtn.addEventListener("click",connect);
+
+  buttonsDiv.querySelectorAll("button").forEach(btn=>{
+    btn.addEventListener("click", function(){
+      if(!connected){
+        alert("Not connected yet.");
+        return;
+      }
+      const username = userInput.value.trim();
+      const feed = feedInput.value.trim();
+      const publishTopic = username + "/feeds/" + feed;
+      const payload = btn.dataset.msg;
+      const message = new Paho.MQTT.Message(payload);
+      message.destinationName = publishTopic;
+      client.send(message);
+      log("➡️ Published => topic: "+publishTopic+" payload: "+payload);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
